@@ -31,5 +31,16 @@ Media keys and desktop now-playing widgets work through MPRIS
     bin/test       # unit tests, offscreen
     bin/install    # makepkg -fsi, adds the app to the launcher
 
-The BBC streams are intended for listeners in the UK. Track and show data come
-from the BBC's public programme feed.
+## Unofficial
+
+This is an unofficial app for personal use. It is not made, endorsed, or
+supported by the BBC, and "BBC" and "6 Music" belong to the BBC.
+
+It relies on two things the BBC does not document for third-party use: the live
+stream address, and the programme feed at `rms.api.bbc.co.uk` that provides the
+track and show information. The BBC can change or block either at any time, and
+the app will then show an error in its window. The streams are intended for
+listeners in the UK.
+
+Check the BBC's [Terms of Use](https://www.bbc.co.uk/usingthebbc/terms/) before
+you rely on it, and do not redistribute it without the BBC's permission.
