@@ -8,6 +8,7 @@
 #include <QUrl>
 
 #include "backend.h"
+#include "mpris.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -15,7 +16,7 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("sixmusic");
     app.setOrganizationName("sixmusic");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion("0.2.0");
 
     // Matches the window to sixmusic.desktop, so the compositor (Wayland
     // app_id) and the launcher pick up the installed icon.
@@ -31,6 +32,10 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     Backend backend;
+
+    // Media keys and now-playing widgets; the app still works without a session bus.
+    Mpris mpris(&backend);
+    mpris.registerOnBus();
 
     QQmlApplicationEngine engine;
     QObject::connect(&translator, &Translator::changed, &engine, &QQmlEngine::retranslate);

@@ -4,6 +4,7 @@
 #include <QtTest>
 
 #include "backend.h"
+#include "mpris.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -90,6 +91,44 @@ private slots:
         QCOMPARE(backend.volume(), 0.0);
         backend.nudgeVolume(0.05);
         QVERIFY(qAbs(backend.volume() - 0.05) < 1e-6);
+    }
+
+    void mprisDescribesTheTrackAndTheShow()
+    {
+        Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b");
+        QVERIFY(backend.applyBroadcast(kBroadcast));
+        QVERIFY(backend.applySegments(kSegments));
+        auto meta = Mpris::metadata(backend);
+        QCOMPARE(meta.value("xesam:title").toString(), QString("First Song"));
+        QCOMPARE(meta.value("xesam:artist").toStringList(), QStringList{"Some Band"});
+        QCOMPARE(meta.value("xesam:album").toString(), QString("The Show"));
+        QCOMPARE(meta.value("mpris:artUrl").toString(), QString("img.test/320x320/a.jpg"));
+
+        QVERIFY(backend.applySegments(kSpeech));
+        meta = Mpris::metadata(backend);
+        QCOMPARE(meta.value("xesam:title").toString(), QString("The Show"));
+        QCOMPARE(meta.value("mpris:artUrl").toString(), QString("img.test/320x320/show.jpg"));
+        QCOMPARE(Mpris::playbackStatus(false), QString("Paused"));
+        QCOMPARE(Mpris::playbackStatus(true), QString("Playing"));
+    }
+
+    void outputListStartsWithSystemDefault()
+    {
+        Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b");
+        const auto list = backend.outputs();
+        QVERIFY(!list.isEmpty());
+        QVERIFY(list.first().toMap().value("id").toString().isEmpty());
+        QCOMPARE(backend.outputIndex(), 0);
+    }
+
+    void missingOutputFallsBackToDefault()
+    {
+        Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b");
+        backend.setOutput("no-such-speakers");
+        QCOMPARE(backend.outputIndex(), 0);
+        backend.chooseOutput(99); // out of range is ignored
+        backend.chooseOutput(0);
+        QCOMPARE(backend.outputIndex(), 0);
     }
 
     void reportsUnreachableInfoService()

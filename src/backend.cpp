@@ -37,6 +37,12 @@ Backend::Backend(const QString &segmentsUrl, const QString &broadcastUrl, QObjec
         m_streamError = message.isEmpty() ? tr("Unknown error") : message;
         emit playingChanged();
     });
+    // Outputs come and go as speakers are plugged in; re-resolve the saved
+    // choice each time so a returning device is picked up again.
+    m_outputId = settings.value("output").toString();
+    connect(&m_devices, &QMediaDevices::audioOutputsChanged, this, &Backend::applyOutput);
+    applyOutput();
+
     connect(&m_output, &QAudioOutput::volumeChanged, this, &Backend::volumeChanged);
     connect(&m_output, &QAudioOutput::mutedChanged, this, &Backend::volumeChanged);
 
@@ -59,6 +65,46 @@ bool Backend::buffering() const {
 void Backend::setVolume(double volume) {
     m_output.setVolume(qBound(0.0, volume, 1.0));
     QSettings().setValue("volume", m_output.volume());
+}
+
+QVariantList Backend::outputs() const {
+    QVariantList list{QVariantMap{{"id", QString()}, {"name", QString()}}};
+    for (const auto &device : QMediaDevices::audioOutputs())
+        list.append(QVariantMap{{"id", QString::fromUtf8(device.id())}, {"name", device.description()}});
+    return list;
+}
+
+int Backend::outputIndex() const {
+    const auto list = outputs();
+    for (int i = 1; i < list.size(); ++i)
+        if (list.at(i).toMap().value("id").toString() == m_outputId)
+            return i;
+    return 0;
+}
+
+void Backend::chooseOutput(int index) {
+    const auto list = outputs();
+    if (index >= 0 && index < list.size())
+        setOutput(list.at(index).toMap().value("id").toString());
+}
+
+void Backend::setOutput(const QString &id) {
+    m_outputId = id;
+    QSettings().setValue("output", id);
+    applyOutput();
+}
+
+// A device that has gone away falls back to the system default, but the
+// choice is kept so it returns when the device does.
+void Backend::applyOutput() {
+    QAudioDevice chosen = QMediaDevices::defaultAudioOutput();
+    if (!m_outputId.isEmpty())
+        for (const auto &device : QMediaDevices::audioOutputs())
+            if (QString::fromUtf8(device.id()) == m_outputId)
+                chosen = device;
+    if (m_output.device() != chosen)
+        m_output.setDevice(chosen);
+    emit outputsChanged();
 }
 
 void Backend::setMuted(bool muted) { m_output.setMuted(muted); }

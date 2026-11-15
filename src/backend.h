@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QAudioDevice>
 #include <QAudioOutput>
 #include <QDateTime>
+#include <QMediaDevices>
 #include <QMediaPlayer>
 #include <QNetworkAccessManager>
 #include <QObject>
@@ -18,6 +20,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString infoError READ infoError NOTIFY infoErrorChanged)
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY volumeChanged)
+    Q_PROPERTY(QVariantList outputs READ outputs NOTIFY outputsChanged)
+    Q_PROPERTY(int outputIndex READ outputIndex NOTIFY outputsChanged)
     Q_PROPERTY(bool onMusic READ onMusic NOTIFY nowChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY nowChanged)
     Q_PROPERTY(QString track READ track NOTIFY nowChanged)
@@ -38,6 +42,9 @@ public:
     QString infoError() const { return m_infoError; }
     double volume() const { return m_output.volume(); }
     bool muted() const { return m_output.isMuted(); }
+    // The first entry is always the system default, with an empty id.
+    QVariantList outputs() const;
+    int outputIndex() const;
     bool onMusic() const { return m_onMusic; }
     QString artist() const { return m_artist; }
     QString track() const { return m_track; }
@@ -57,6 +64,8 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void nudgeVolume(double delta);
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void chooseOutput(int index);
+    void setOutput(const QString &id);
 
     // Parsing is separate from the network so tests can feed it saved replies.
     // Both return false when the reply is not what the BBC documents.
@@ -69,13 +78,18 @@ signals:
     void infoErrorChanged();
     void volumeChanged();
     void nowChanged();
+    void outputsChanged();
 
 private:
+    void applyOutput();
+
     void fetch(const QString &url, bool (Backend::*apply)(const QByteArray &));
     void setInfoError(const QString &message);
 
     QMediaPlayer m_player;
     QAudioOutput m_output;
+    QMediaDevices m_devices;
+    QString m_outputId;
     QNetworkAccessManager m_network;
     QTimer m_poll;
     QString m_segmentsUrl, m_broadcastUrl;

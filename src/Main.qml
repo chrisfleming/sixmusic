@@ -117,6 +117,25 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                ComboBox {
+                    id: outputPicker
+                    Layout.fillWidth: true
+                    model: backend.outputs
+                    currentIndex: backend.outputIndex
+                    onActivated: index => backend.chooseOutput(index)
+                    displayText: label(model[currentIndex])
+                    function label(entry) {
+                        return !entry ? "" : entry.id === "" ? qsTr("System default") : entry.name
+                    }
+                    delegate: ItemDelegate {
+                        width: outputPicker.width
+                        text: outputPicker.label(modelData)
+                        highlighted: outputPicker.highlightedIndex === index
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Output device")
+                }
             }
 
             // Right: what is playing, who is on, and what just played.
