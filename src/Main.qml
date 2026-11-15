@@ -18,12 +18,14 @@ ApplicationWindow {
     Material.roundedScale: theme.radius
 
     property bool helpVisible: false
+    property bool showLoved: false
     readonly property color dim: "#9a9aa2"
 
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: win.helpVisible; onActivated: win.helpVisible = false }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: backend.toggle() }
+    Shortcut { sequence: "L"; context: Qt.ApplicationShortcut; onActivated: backend.toggleCurrentLoved() }
     Shortcut { sequence: "M"; context: Qt.ApplicationShortcut; onActivated: backend.muted = !backend.muted }
     Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; onActivated: backend.nudgeVolume(0.05) }
     Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; onActivated: backend.nudgeVolume(-0.05) }
@@ -152,14 +154,31 @@ ApplicationWindow {
                     font.capitalization: Font.AllUppercase
                     font.letterSpacing: 1.5
                 }
-                Label {
+                RowLayout {
                     Layout.fillWidth: true
-                    text: backend.onMusic ? backend.track : backend.showTitle
-                    font.pixelSize: 30
-                    font.bold: true
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
+                    spacing: 8
+                    Label {
+                        // Not stretched, so the heart sits right beside the title.
+                        Layout.fillWidth: false
+                        Layout.maximumWidth: Math.max(100, parent.width - (backend.onMusic ? 56 : 0))
+                        text: backend.onMusic ? backend.track : backend.showTitle
+                        font.pixelSize: 30
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+                    ToolButton {
+                        visible: backend.onMusic
+                        Layout.alignment: Qt.AlignTop
+                        text: backend.currentLoved ? "♥" : "♡"
+                        font.pixelSize: 28
+                        Material.foreground: backend.currentLoved ? theme.accent : win.dim
+                        onClicked: backend.toggleCurrentLoved()
+                        ToolTip.visible: hovered
+                        ToolTip.text: backend.currentLoved ? qsTr("Remove from loved tracks") : qsTr("Love this track")
+                    }
+                    Item { Layout.fillWidth: true }
                 }
                 Label {
                     Layout.fillWidth: true
@@ -215,13 +234,24 @@ ApplicationWindow {
                     }
                 }
 
-                Label {
-                    Layout.topMargin: 18
-                    text: qsTr("Recently played")
-                    color: win.dim
-                    font.pixelSize: 11
-                    font.capitalization: Font.AllUppercase
-                    font.letterSpacing: 1.2
+                RowLayout {
+                    Layout.topMargin: 14
+                    spacing: 4
+                    Repeater {
+                        model: [
+                            { loved: false, label: qsTr("Recently played") },
+                            { loved: true, label: qsTr("Loved (%1)").arg(backend.lovedTracks.length) }
+                        ]
+                        delegate: Button {
+                            flat: true
+                            text: modelData.label
+                            font.pixelSize: 12
+                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 1.2
+                            Material.foreground: win.showLoved === modelData.loved ? theme.accent : win.dim
+                            onClicked: win.showLoved = modelData.loved
+                        }
+                    }
                 }
 
                 ListView {
@@ -229,7 +259,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    model: backend.recent
+                    model: win.showLoved ? backend.lovedTracks : backend.recent
                     spacing: 2
                     boundsBehavior: Flickable.StopAtBounds
 
@@ -256,9 +286,22 @@ ApplicationWindow {
                                 }
                             }
                             Label {
-                                text: modelData.when
+                                text: {
+                                    translator.language
+                                    return typeof modelData.when === "string" ? modelData.when
+                                        : Qt.formatDate(modelData.when, Locale.ShortFormat)
+                                }
                                 color: win.dim
                                 font.pixelSize: 12
+                            }
+                            ToolButton {
+                                // Reading lovedTracks makes the heart follow changes.
+                                readonly property bool loved: backend.lovedTracks.length >= 0
+                                    && backend.isLoved(modelData.artist, modelData.track)
+                                text: loved ? "♥" : "♡"
+                                font.pixelSize: 18
+                                Material.foreground: loved ? theme.accent : win.dim
+                                onClicked: backend.toggleLoved(modelData.artist, modelData.track)
                             }
                         }
                     }
@@ -266,11 +309,19 @@ ApplicationWindow {
                     Label {
                         anchors.centerIn: parent
                         visible: history.count === 0
-                        text: qsTr("Nothing played yet")
+                        text: win.showLoved ? qsTr("No loved tracks yet. Press L while a track plays.") : qsTr("Nothing played yet")
                         color: win.dim
                     }
                 }
 
+                Label {
+                    Layout.fillWidth: true
+                    visible: backend.lovedError !== ""
+                    text: backend.lovedError
+                    color: "#ff6b6b"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
                 Label {
                     Layout.fillWidth: true
                     visible: backend.infoError !== ""
@@ -309,6 +360,7 @@ ApplicationWindow {
                             { key: "Space", what: qsTr("Play or stop the radio") },
                             { key: "↑", what: qsTr("Volume up") },
                             { key: "↓", what: qsTr("Volume down") },
+                            { key: "L", what: qsTr("Love the current track") },
                             { key: "M", what: qsTr("Mute") },
                             { key: "?", what: qsTr("Show or hide this help") },
                             { key: "Q", what: qsTr("Quit") }

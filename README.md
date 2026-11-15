@@ -12,9 +12,14 @@ Hyprland's corner rounding, and the Omarchy language.
 | ------- | ----------------------- |
 | `Space` | Play or stop the radio  |
 | `↑` `↓` | Volume up and down      |
+| `L`     | Love the current track  |
 | `M`     | Mute                    |
 | `?`     | Show the shortcuts      |
 | `Q`     | Quit                    |
+
+Loved tracks are logged to `~/.local/share/sixmusic/loved.json`, a plain JSON
+list with the artist, track, show, and time. The Loved tab in the window shows
+them, newest first, and the heart removes one again.
 
 The output dropdown under the controls picks the speakers for this app only.
 Media keys and desktop now-playing widgets work through MPRIS

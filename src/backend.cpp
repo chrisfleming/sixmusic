@@ -1,11 +1,16 @@
 #include "backend.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSaveFile>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QtMath>
 
@@ -18,10 +23,14 @@ const char *kSegments = "https://rms.api.bbc.co.uk/v2/services/bbc_6music/segmen
 const char *kBroadcast = "https://rms.api.bbc.co.uk/v2/broadcasts/latest?service=bbc_6music&on_air=now";
 }
 
-Backend::Backend(const QString &segmentsUrl, const QString &broadcastUrl, QObject *parent)
+Backend::Backend(const QString &segmentsUrl, const QString &broadcastUrl, const QString &lovedFile, QObject *parent)
     : QObject(parent),
       m_segmentsUrl(segmentsUrl.isEmpty() ? kSegments : segmentsUrl),
-      m_broadcastUrl(broadcastUrl.isEmpty() ? kBroadcast : broadcastUrl) {
+      m_broadcastUrl(broadcastUrl.isEmpty() ? kBroadcast : broadcastUrl),
+      m_lovedFile(lovedFile.isEmpty()
+                      ? QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/sixmusic/loved.json"
+                      : lovedFile) {
+    loadLoved();
     m_player.setAudioOutput(&m_output);
 
     QSettings settings;
@@ -105,6 +114,95 @@ void Backend::applyOutput() {
     if (m_output.device() != chosen)
         m_output.setDevice(chosen);
     emit outputsChanged();
+}
+
+QString Backend::lovedKey(const QString &artist, const QString &track) {
+    return artist.trimmed().toLower() + '\t' + track.trimmed().toLower();
+}
+
+bool Backend::isLoved(const QString &artist, const QString &track) const {
+    const QString key = lovedKey(artist, track);
+    for (const auto &item : m_loved)
+        if (lovedKey(item.artist, item.track) == key)
+            return true;
+    return false;
+}
+
+// Newest first, which is how people look for what they just loved.
+QVariantList Backend::lovedTracks() const {
+    QVariantList list;
+    for (auto it = m_loved.crbegin(); it != m_loved.crend(); ++it)
+        list.append(QVariantMap{{"artist", it->artist}, {"track", it->track}, {"show", it->show}, {"when", it->when}});
+    return list;
+}
+
+bool Backend::toggleCurrentLoved() {
+    if (!m_onMusic)
+        return false;
+    toggleLoved(m_artist, m_track);
+    return true;
+}
+
+void Backend::toggleLoved(const QString &artist, const QString &track) {
+    if (!m_lovedWritable || artist.isEmpty() || track.isEmpty())
+        return;
+    const QString key = lovedKey(artist, track);
+    const auto before = m_loved;
+    bool removed = false;
+    for (int i = m_loved.size() - 1; i >= 0; --i)
+        if (lovedKey(m_loved.at(i).artist, m_loved.at(i).track) == key) {
+            m_loved.removeAt(i);
+            removed = true;
+        }
+    if (!removed)
+        m_loved.append({artist, track, m_showTitle, QDateTime::currentDateTime()});
+    // Keep the list on screen in step with the file: undo if it cannot be saved.
+    if (!saveLoved())
+        m_loved = before;
+    emit lovedChanged();
+}
+
+// The log is a plain JSON array so it can be read, grepped, or exported.
+// A file that cannot be parsed is left alone, never overwritten.
+void Backend::loadLoved() {
+    QFile file(m_lovedFile);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_lovedWritable = false;
+        m_lovedError = tr("Can't read %1: %2").arg(m_lovedFile, file.errorString());
+        return;
+    }
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isArray()) {
+        m_lovedWritable = false;
+        m_lovedError = tr("Can't read %1: not a list of tracks").arg(m_lovedFile);
+        return;
+    }
+    for (const auto &value : document.array()) {
+        const auto item = value.toObject();
+        m_loved.append({item.value("artist").toString(), item.value("track").toString(),
+                        item.value("show").toString(),
+                        QDateTime::fromString(item.value("loved_at").toString(), Qt::ISODate).toLocalTime()});
+    }
+}
+
+bool Backend::saveLoved() {
+    QJsonArray array;
+    for (const auto &item : m_loved)
+        array.append(QJsonObject{{"artist", item.artist}, {"track", item.track}, {"show", item.show},
+                                 {"loved_at", item.when.toUTC().toString(Qt::ISODate)}});
+    QDir().mkpath(QFileInfo(m_lovedFile).absolutePath());
+    // QSaveFile writes beside the target and renames, so a crash cannot
+    // leave a half-written log.
+    QSaveFile file(m_lovedFile);
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(array).toJson()) < 0 || !file.commit()) {
+        m_lovedError = tr("Can't save %1: %2").arg(m_lovedFile, file.errorString());
+        return false;
+    }
+    m_lovedError.clear();
+    return true;
 }
 
 void Backend::setMuted(bool muted) { m_output.setMuted(muted); }
@@ -210,6 +308,8 @@ bool Backend::applySegments(const QByteArray &json) {
     m_artwork = artwork;
     m_recent = recent;
     emit nowChanged();
+    // Whether the track on air is loved depends on which track that is.
+    emit lovedChanged();
     return true;
 }
 

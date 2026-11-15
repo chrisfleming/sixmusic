@@ -36,6 +36,7 @@ private slots:
         // Volume is remembered with QSettings; keep tests out of the real one.
         QVERIFY(m_config.isValid());
         qputenv("XDG_CONFIG_HOME", m_config.path().toUtf8());
+        qputenv("XDG_DATA_HOME", m_config.path().toUtf8());
     }
 
     void readsNowPlayingAndRecent()
@@ -110,6 +111,63 @@ private slots:
         QCOMPARE(meta.value("mpris:artUrl").toString(), QString("img.test/320x320/show.jpg"));
         QCOMPARE(Mpris::playbackStatus(false), QString("Paused"));
         QCOMPARE(Mpris::playbackStatus(true), QString("Playing"));
+    }
+
+    void lovingATrackSavesAndTogglesOff()
+    {
+        QTemporaryDir dir;
+        const QString file = dir.filePath("nested/loved.json");
+        {
+            Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b", file);
+            QVERIFY(!backend.toggleCurrentLoved()); // nothing on air yet
+            QVERIFY(backend.applyBroadcast(kBroadcast));
+            QVERIFY(backend.applySegments(kSegments));
+            QVERIFY(!backend.currentLoved());
+            QVERIFY(backend.toggleCurrentLoved());
+            QVERIFY(backend.currentLoved());
+            QCOMPARE(backend.lovedTracks().size(), 1);
+            QCOMPARE(backend.lovedTracks().first().toMap().value("show").toString(), QString("The Show"));
+            // Case and spacing do not make a second entry.
+            backend.toggleLoved(" some band", "FIRST SONG ");
+            QVERIFY(!backend.currentLoved());
+            backend.toggleLoved("Some Band", "First Song");
+            backend.toggleLoved("Other Act", "Earlier Song");
+        }
+        // A new run reads the log back, newest first.
+        Backend again("http://127.0.0.1:1/s", "http://127.0.0.1:1/b", file);
+        const auto loved = again.lovedTracks();
+        QCOMPARE(loved.size(), 2);
+        QCOMPARE(loved.first().toMap().value("track").toString(), QString("Earlier Song"));
+        QVERIFY(again.isLoved("some band", "first song"));
+        QVERIFY(again.lovedError().isEmpty());
+    }
+
+    void loveStateFollowsTheTrackOnAir()
+    {
+        QTemporaryDir dir;
+        Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b", dir.filePath("loved.json"));
+        backend.toggleLoved("Some Band", "First Song");
+        QSignalSpy spy(&backend, &Backend::lovedChanged);
+        // The heart binds to currentLoved, so a new track must announce it.
+        QVERIFY(backend.applySegments(kSegments));
+        QVERIFY(backend.currentLoved());
+        QVERIFY(spy.count() >= 1);
+        QVERIFY(backend.applySegments(kSpeech));
+        QVERIFY(!backend.currentLoved());
+    }
+
+    void unreadableLogIsNeverOverwritten()
+    {
+        QTemporaryDir dir;
+        const QString file = dir.filePath("loved.json");
+        write(file, "this is not json");
+        Backend backend("http://127.0.0.1:1/s", "http://127.0.0.1:1/b", file);
+        QVERIFY(!backend.lovedError().isEmpty());
+        backend.toggleLoved("A", "B");
+        QVERIFY(backend.lovedTracks().isEmpty());
+        QFile log(file);
+        QVERIFY(log.open(QIODevice::ReadOnly));
+        QCOMPARE(log.readAll(), QByteArray("this is not json"));
     }
 
     void outputListStartsWithSystemDefault()

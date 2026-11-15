@@ -22,6 +22,10 @@ class Backend : public QObject {
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY volumeChanged)
     Q_PROPERTY(QVariantList outputs READ outputs NOTIFY outputsChanged)
     Q_PROPERTY(int outputIndex READ outputIndex NOTIFY outputsChanged)
+    Q_PROPERTY(bool currentLoved READ currentLoved NOTIFY lovedChanged)
+    Q_PROPERTY(QVariantList lovedTracks READ lovedTracks NOTIFY lovedChanged)
+    Q_PROPERTY(QString lovedError READ lovedError NOTIFY lovedChanged)
+    Q_PROPERTY(QString lovedPath READ lovedPath CONSTANT)
     Q_PROPERTY(bool onMusic READ onMusic NOTIFY nowChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY nowChanged)
     Q_PROPERTY(QString track READ track NOTIFY nowChanged)
@@ -34,7 +38,8 @@ class Backend : public QObject {
     Q_PROPERTY(QDateTime showEnd READ showEnd NOTIFY nowChanged)
 
 public:
-    explicit Backend(const QString &segmentsUrl = {}, const QString &broadcastUrl = {}, QObject *parent = nullptr);
+    explicit Backend(const QString &segmentsUrl = {}, const QString &broadcastUrl = {}, const QString &lovedFile = {},
+                     QObject *parent = nullptr);
 
     bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
     bool buffering() const;
@@ -45,6 +50,11 @@ public:
     // The first entry is always the system default, with an empty id.
     QVariantList outputs() const;
     int outputIndex() const;
+    bool currentLoved() const { return m_onMusic && isLoved(m_artist, m_track); }
+    QVariantList lovedTracks() const;
+    QString lovedError() const { return m_lovedError; }
+    QString lovedPath() const { return m_lovedFile; }
+    Q_INVOKABLE bool isLoved(const QString &artist, const QString &track) const;
     bool onMusic() const { return m_onMusic; }
     QString artist() const { return m_artist; }
     QString track() const { return m_track; }
@@ -64,6 +74,9 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void nudgeVolume(double delta);
     Q_INVOKABLE void refresh();
+    // Loves the track on air, or removes it again; false when no track is on.
+    Q_INVOKABLE bool toggleCurrentLoved();
+    Q_INVOKABLE void toggleLoved(const QString &artist, const QString &track);
     Q_INVOKABLE void chooseOutput(int index);
     void setOutput(const QString &id);
 
@@ -79,8 +92,14 @@ signals:
     void volumeChanged();
     void nowChanged();
     void outputsChanged();
+    void lovedChanged();
 
 private:
+    struct Loved { QString artist, track, show; QDateTime when; };
+    static QString lovedKey(const QString &artist, const QString &track);
+    void loadLoved();
+    bool saveLoved();
+
     void applyOutput();
 
     void fetch(const QString &url, bool (Backend::*apply)(const QByteArray &));
@@ -90,6 +109,9 @@ private:
     QAudioOutput m_output;
     QMediaDevices m_devices;
     QString m_outputId;
+    QString m_lovedFile, m_lovedError;
+    bool m_lovedWritable = true;
+    QList<Loved> m_loved;
     QNetworkAccessManager m_network;
     QTimer m_poll;
     QString m_segmentsUrl, m_broadcastUrl;
