@@ -1,0 +1,22 @@
+{
+  "Now playing": "Spiller nu",
+  "On air": "I luften",
+  "Recently played": "Senest spillet",
+  "Nothing played yet": "Intet spillet endnu",
+  "Play": "Afspil",
+  "Stop": "Stop",
+  "Connecting…": "Forbinder…",
+  "Live": "Live",
+  "Stopped": "Stoppet",
+  "Speech on 6 Music": "Tale på 6 Music",
+  "Keyboard shortcuts": "Tastaturgenveje",
+  "Play or stop the radio": "Afspil eller stop radioen",
+  "Volume up": "Lyd op",
+  "Volume down": "Lyd ned",
+  "Mute": "Slå lyden fra",
+  "Show or hide this help": "Vis eller skjul denne hjælp",
+  "Quit": "Afslut",
+  "Can't play the stream: %1": "Kan ikke afspille streamen: %1",
+  "Can't load what's playing: %1": "Kan ikke hente hvad der spilles: %1",
+  "%n tracks": { "one": "%n nummer", "other": "%n numre" }
+}

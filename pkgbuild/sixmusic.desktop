@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=6 Music
+Name[da]=6 Music
+Comment=Listen to BBC Radio 6 Music and see what is playing
+Comment[da]=Hør BBC Radio 6 Music og se hvad der spilles
+Exec=sixmusic
+Icon=sixmusic
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=radio;bbc;music;6music;
+StartupWMClass=sixmusic
