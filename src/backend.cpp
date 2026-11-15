@@ -126,6 +126,9 @@ void Backend::play() {
     m_streamError.clear();
     // A live stream has no useful pause: starting again must rejoin the
     // present, so reload the source instead of resuming a stale buffer.
+    // Qt ignores setSource() with the URL it already has, and after stop() the
+    // old pipeline is gone, so clear it first to force a fresh connection.
+    m_player.setSource(QUrl());
     m_player.setSource(QUrl(kStream));
     m_player.play();
     emit playingChanged();
