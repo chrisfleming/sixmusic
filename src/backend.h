@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include "lastfm.h"
+
 // Plays BBC Radio 6 Music and follows what is on air: the current track, the
 // recent ones, and the show. Both come from the BBC's public RMS feed.
 class Backend : public QObject {
@@ -26,6 +28,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList lovedTracks READ lovedTracks NOTIFY lovedChanged)
     Q_PROPERTY(QString lovedError READ lovedError NOTIFY lovedChanged)
     Q_PROPERTY(QString lovedPath READ lovedPath CONSTANT)
+    Q_PROPERTY(QObject *lastfm READ lastfm CONSTANT)
     Q_PROPERTY(bool onMusic READ onMusic NOTIFY nowChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY nowChanged)
     Q_PROPERTY(QString track READ track NOTIFY nowChanged)
@@ -55,6 +58,7 @@ public:
     QString lovedError() const { return m_lovedError; }
     QString lovedPath() const { return m_lovedFile; }
     Q_INVOKABLE bool isLoved(const QString &artist, const QString &track) const;
+    QObject *lastfm() { return &m_lastfm; }
     bool onMusic() const { return m_onMusic; }
     QString artist() const { return m_artist; }
     QString track() const { return m_track; }
@@ -85,6 +89,8 @@ public:
     bool applySegments(const QByteArray &json);
     bool applyBroadcast(const QByteArray &json);
     static QString artworkUrl(QString url, int size);
+    // Seconds that must be heard before Last.fm counts a track, or -1 if it never will.
+    static int scrobbleThreshold(int durationSeconds);
 
 signals:
     void playingChanged();
@@ -101,20 +107,28 @@ private:
     bool saveLoved();
 
     void applyOutput();
+    void trackChanged();
+    void tickListening();
 
     void fetch(const QString &url, bool (Backend::*apply)(const QByteArray &));
     void setInfoError(const QString &message);
 
+    QString m_segmentsUrl, m_broadcastUrl;
     QMediaPlayer m_player;
     QAudioOutput m_output;
     QMediaDevices m_devices;
     QString m_outputId;
+    Lastfm m_lastfm;
+    // What counts toward a scrobble: time actually spent listening to this track.
+    QTimer m_listenTimer;
+    QString m_trackKey;
+    int m_trackOffset = -1, m_trackDuration = 0, m_listened = 0;
+    bool m_scrobbled = false;
     QString m_lovedFile, m_lovedError;
     bool m_lovedWritable = true;
     QList<Loved> m_loved;
     QNetworkAccessManager m_network;
     QTimer m_poll;
-    QString m_segmentsUrl, m_broadcastUrl;
     QString m_streamError, m_infoError;
     bool m_onMusic = false;
     QString m_artist, m_track, m_artwork;

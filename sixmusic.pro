@@ -6,6 +6,7 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
+    src/lastfm.h \
     src/mpris.h \
     src/theme.h \
     src/translator.h
@@ -13,6 +14,7 @@ HEADERS += \
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
+    src/lastfm.cpp \
     src/mpris.cpp \
     src/theme.cpp \
     src/translator.cpp

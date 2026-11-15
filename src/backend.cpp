@@ -36,9 +36,16 @@ Backend::Backend(const QString &segmentsUrl, const QString &broadcastUrl, const 
     QSettings settings;
     m_output.setVolume(settings.value("volume", 0.8).toDouble());
 
+    m_listenTimer.setInterval(1000);
+    connect(&m_listenTimer, &QTimer::timeout, this, &Backend::tickListening);
+    m_listenTimer.start();
+
     connect(&m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
-        if (playing())
+        if (playing()) {
             m_streamError.clear();
+            if (m_onMusic)
+                m_lastfm.nowPlaying(m_artist, m_track, m_trackDuration);
+        }
         emit playingChanged();
     });
     connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this] { emit playingChanged(); });
@@ -159,6 +166,8 @@ void Backend::toggleLoved(const QString &artist, const QString &track) {
     // Keep the list on screen in step with the file: undo if it cannot be saved.
     if (!saveLoved())
         m_loved = before;
+    else
+        m_lastfm.love(artist, track, !removed);
     emit lovedChanged();
 }
 
@@ -203,6 +212,46 @@ bool Backend::saveLoved() {
     }
     m_lovedError.clear();
     return true;
+}
+
+// A new track starts its listening clock from zero.
+void Backend::trackChanged() {
+    m_listened = 0;
+    m_scrobbled = false;
+    if (m_onMusic && playing())
+        m_lastfm.nowPlaying(m_artist, m_track, m_trackDuration);
+}
+
+// Last.fm counts a track once half of it, or four minutes, has been heard,
+// and never for tracks of 30 seconds or less. An unknown length gets the
+// four-minute rule. Paused time does not count.
+int Backend::scrobbleThreshold(int durationSeconds) {
+    if (durationSeconds <= 0)
+        return 240;
+    return durationSeconds <= 30 ? -1 : qMin(durationSeconds / 2, 240);
+}
+
+void Backend::tickListening() {
+    if (!m_onMusic || !playing() || m_scrobbled)
+        return;
+    const int needed = scrobbleThreshold(m_trackDuration);
+    if (needed < 0) {
+        m_scrobbled = true;
+        return;
+    }
+    if (++m_listened < needed)
+        return;
+    m_scrobbled = true;
+
+    // Prefer the real start (programme start plus the track's offset); if
+    // that looks wrong, fall back to when the listening began.
+    QDateTime started = QDateTime::currentDateTime().addSecs(-m_listened);
+    if (m_showStart.isValid() && m_trackOffset >= 0) {
+        const QDateTime guess = m_showStart.addSecs(m_trackOffset);
+        if (guess <= QDateTime::currentDateTime() && guess >= started.addSecs(-3600))
+            started = guess;
+    }
+    m_lastfm.scrobble(m_artist, m_track, started);
 }
 
 void Backend::setMuted(bool muted) { m_output.setMuted(muted); }
@@ -280,6 +329,7 @@ bool Backend::applySegments(const QByteArray &json) {
     bool onMusic = false;
     QString artist, track, artwork;
     QVariantList recent;
+    int duration = 0, offset = -1;
     for (const auto &value : data.toArray()) {
         const auto item = value.toObject();
         if (item.value("segment_type").toString() != "music")
@@ -290,6 +340,13 @@ bool Backend::applySegments(const QByteArray &json) {
         const QString image = artworkUrl(item.value("image_url").toString(), 320);
         if (item.value("offset").toObject().value("now_playing").toBool()) {
             onMusic = true;
+            // Seconds into the programme, so the end minus the start is the track length.
+            const auto timing = item.value("offset").toObject();
+            if (timing.value("start").isDouble()) {
+                offset = timing.value("start").toInt();
+                if (timing.value("end").isDouble())
+                    duration = qMax(0, timing.value("end").toInt() - offset);
+            }
             artist = itemArtist;
             track = itemTrack;
             artwork = image;
@@ -302,7 +359,10 @@ bool Backend::applySegments(const QByteArray &json) {
     if (onMusic == m_onMusic && artist == m_artist && track == m_track && artwork == m_artwork
         && recent == m_recent)
         return true;
+    const bool newTrack = onMusic != m_onMusic || artist != m_artist || track != m_track;
     m_onMusic = onMusic;
+    m_trackOffset = offset;
+    m_trackDuration = duration;
     m_artist = artist;
     m_track = track;
     m_artwork = artwork;
@@ -310,6 +370,8 @@ bool Backend::applySegments(const QByteArray &json) {
     emit nowChanged();
     // Whether the track on air is loved depends on which track that is.
     emit lovedChanged();
+    if (newTrack)
+        trackChanged();
     return true;
 }
 

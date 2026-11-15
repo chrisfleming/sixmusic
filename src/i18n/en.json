@@ -1,3 +1,4 @@
 {
+  "%n scrobbles waiting to be sent": { "one": "%n scrobble waiting to be sent", "other": "%n scrobbles waiting to be sent" },
   "%n tracks": { "one": "%n track", "other": "%n tracks" }
 }

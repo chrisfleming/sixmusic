@@ -31,6 +31,24 @@ Media keys and desktop now-playing widgets work through MPRIS
     bin/test       # unit tests, offscreen
     bin/install    # makepkg -fsi, adds the app to the launcher
 
+## Last.fm
+
+Click "Connect to Last.fm" under the controls. You need your own free API
+account ([create one](https://www.last.fm/api/account/create)); paste its API
+key and shared secret, then allow access in the browser window that opens. Your
+Last.fm password is never typed into the app.
+
+Once connected, 6 Music updates your now-playing, scrobbles tracks, and loves or
+unloves tracks on Last.fm when you do here. A track is scrobbled once you have
+listened to half of it or four minutes, whichever comes first, and never when
+it is 30 seconds or shorter. Time while the radio is stopped does not count.
+Scrobbles that cannot be sent (no connection) wait in
+`~/.local/share/sixmusic/scrobble-queue.json` and are retried.
+
+Your API secret and login are kept in `~/.config/sixmusic/lastfm.json`, readable
+only by you. Loves made while offline reach your local list but not Last.fm, and
+loves from before you connected are not copied across.
+
 ## Unofficial
 
 This is an unofficial app for personal use. It is not made, endorsed, or

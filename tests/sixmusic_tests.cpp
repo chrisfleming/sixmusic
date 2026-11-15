@@ -1,9 +1,16 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QCryptographicHash>
+#include <QDesktopServices>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QtTest>
 
 #include "backend.h"
+#include "lastfm.h"
 #include "mpris.h"
 #include "theme.h"
 #include "translator.h"
@@ -26,6 +33,72 @@ static const char *kSpeech = R"json({"data":[
 static const char *kBroadcast = R"json({"data":[{"start":"2026-11-15T13:00:00Z","end":"2026-11-15T16:00:00Z",
   "programme":{"titles":{"primary":"The Show","secondary":"With a Guest"},
   "images":[{"url":"img.test/{recipe}/show.jpg"}]}}]})json";
+
+// A stand-in for ws.audioscrobbler.com: records each request and answers with
+// the next canned reply (the last one repeats).
+class FakeLastfm : public QObject {
+    Q_OBJECT
+public:
+    FakeLastfm() {
+        QVERIFY2(m_server.listen(QHostAddress::LocalHost), "fake server");
+        connect(&m_server, &QTcpServer::newConnection, this, [this] {
+            auto *socket = m_server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, this, [this, socket] { handle(socket); });
+        });
+    }
+    QString url() const { return QString("http://127.0.0.1:%1/").arg(m_server.serverPort()); }
+    QList<QByteArray> requests;       // request line for GET, body for POST
+    QList<QByteArray> replies;
+
+private:
+    void handle(QTcpSocket *socket) {
+        m_buffer[socket] += socket->readAll();
+        const QByteArray &data = m_buffer[socket];
+        const int end = data.indexOf("\r\n\r\n");
+        if (end < 0)
+            return;
+        int length = 0;
+        for (const auto &line : data.left(end).split('\n'))
+            if (line.toLower().startsWith("content-length:"))
+                length = line.mid(15).trimmed().toInt();
+        if (data.size() < end + 4 + length)
+            return;
+        const bool post = data.startsWith("POST");
+        requests.append(post ? data.mid(end + 4, length) : data.left(data.indexOf("\r\n")));
+        m_buffer.remove(socket);
+        const QByteArray body = replies.isEmpty() ? QByteArray("{}") : replies.size() > 1 ? replies.takeFirst() : replies.first();
+        socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    }
+    QTcpServer m_server;
+    QHash<QTcpSocket *, QByteArray> m_buffer;
+};
+
+// Catches the browser URL the connect step opens.
+class UrlCatcher : public QObject {
+    Q_OBJECT
+public slots:
+    void open(const QUrl &url) { opened.append(url); }
+public:
+    QList<QUrl> opened;
+};
+
+static QMap<QString, QString> decodeForm(const QByteArray &body) {
+    QMap<QString, QString> map;
+    for (const auto &pair : body.split('&')) {
+        const auto parts = pair.split('=');
+        map[QUrl::fromPercentEncoding(parts.value(0))] = QUrl::fromPercentEncoding(parts.value(1));
+    }
+    return map;
+}
+
+static void writeFile(const QString &path, const QByteArray &contents) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(contents);
+}
 
 class SixMusicTests : public QObject {
     Q_OBJECT
@@ -168,6 +241,142 @@ private slots:
         QFile log(file);
         QVERIFY(log.open(QIODevice::ReadOnly));
         QCOMPARE(log.readAll(), QByteArray("this is not json"));
+    }
+
+    void scrobbleThresholdFollowsLastfmRules()
+    {
+        QCOMPARE(Backend::scrobbleThreshold(0), 240);    // length unknown
+        QCOMPARE(Backend::scrobbleThreshold(30), -1);    // too short to count
+        QCOMPARE(Backend::scrobbleThreshold(31), 15);
+        QCOMPARE(Backend::scrobbleThreshold(200), 100);  // half the track
+        QCOMPARE(Backend::scrobbleThreshold(600), 240);  // capped at four minutes
+    }
+
+    void lastfmSignsSortedParamsWithoutFormat()
+    {
+        const QMap<QString, QString> params{{"track", "T"}, {"artist", "A"}, {"format", "json"}, {"callback", "x"}};
+        const QString expected = QString::fromLatin1(
+            QCryptographicHash::hash("artistAtrackTsecret", QCryptographicHash::Md5).toHex());
+        QCOMPARE(Lastfm::sign(params, "secret"), expected);
+    }
+
+    void lastfmKeepsCredentialsPrivate()
+    {
+        QTemporaryDir dir;
+        Lastfm lastfm(dir.filePath("c/lastfm.json"), dir.filePath("q.json"), "http://127.0.0.1:1/");
+        QVERIFY(!lastfm.configured());
+        lastfm.saveCredentials(" key ", " secret ");
+        QVERIFY(lastfm.configured());
+        QVERIFY(!lastfm.connected());
+        const auto permissions = QFile::permissions(dir.filePath("c/lastfm.json"));
+        QVERIFY(permissions & QFile::ReadOwner);
+        QVERIFY(!(permissions & (QFile::ReadGroup | QFile::ReadOther | QFile::WriteGroup | QFile::WriteOther)));
+        Lastfm reloaded(dir.filePath("c/lastfm.json"), dir.filePath("q.json"), "http://127.0.0.1:1/");
+        QVERIFY(reloaded.configured());
+    }
+
+    void lastfmIgnoresScrobblesWhenNotConnected()
+    {
+        QTemporaryDir dir;
+        Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), "http://127.0.0.1:1/");
+        lastfm.scrobble("A", "B", QDateTime::currentDateTime());
+        QCOMPARE(lastfm.pending(), 0);
+    }
+
+    void lastfmSendsASignedScrobble()
+    {
+        QTemporaryDir dir;
+        FakeLastfm server;
+        server.replies = {R"json({"scrobbles":{"@attr":{"accepted":1,"ignored":0}}})json"};
+        writeFile(dir.filePath("c.json"), R"json({"api_key":"k","api_secret":"s","session_key":"sk","user":"me"})json");
+        Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        QVERIFY(lastfm.connected());
+
+        // A "+" and "&" in a title must arrive intact, not as a space or a split.
+        lastfm.scrobble("Sly & Robbie", "A+B", QDateTime::fromSecsSinceEpoch(1700000000));
+        QTRY_COMPARE(server.requests.size(), 1);
+        auto form = decodeForm(server.requests.first());
+        QCOMPARE(form.value("method"), QString("track.scrobble"));
+        QCOMPARE(form.value("artist[0]"), QString("Sly & Robbie"));
+        QCOMPARE(form.value("track[0]"), QString("A+B"));
+        QCOMPARE(form.value("timestamp[0]"), QString("1700000000"));
+        QCOMPARE(form.value("sk"), QString("sk"));
+        const QString sent = form.take("api_sig");
+        QCOMPARE(sent, Lastfm::sign(form, "s"));
+        QTRY_COMPARE(lastfm.pending(), 0);
+    }
+
+    void lastfmKeepsScrobblesUntilItCanSendThem()
+    {
+        QTemporaryDir dir;
+        FakeLastfm server;
+        server.replies = {R"json({"error":11,"message":"Service offline"})json"};
+        writeFile(dir.filePath("c.json"), R"json({"api_key":"k","api_secret":"s","session_key":"sk","user":"me"})json");
+        {
+            Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+            lastfm.scrobble("A", "B", QDateTime::currentDateTime());
+            QTRY_VERIFY(!lastfm.error().isEmpty());
+            QCOMPARE(lastfm.pending(), 1);
+        }
+        // A new run finds the queue on disk and sends it when Last.fm is back.
+        server.replies = {R"json({"scrobbles":{}})json"};
+        Lastfm again(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        QCOMPARE(again.pending(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(again.pending(), 0, 8000);
+    }
+
+    void lastfmForgetsALoginItNoLongerTrusts()
+    {
+        QTemporaryDir dir;
+        FakeLastfm server;
+        server.replies = {R"json({"error":9,"message":"Invalid session key"})json"};
+        writeFile(dir.filePath("c.json"), R"json({"api_key":"k","api_secret":"s","session_key":"old","user":"me"})json");
+        Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        lastfm.love("A", "B", true);
+        QTRY_VERIFY(!lastfm.connected());
+        QVERIFY(lastfm.configured());
+        QVERIFY(!lastfm.error().isEmpty());
+    }
+
+    void lastfmConnectsAfterBrowserApproval()
+    {
+        QTemporaryDir dir;
+        FakeLastfm server;
+        // Token, then "not approved yet", then the session.
+        server.replies = {R"json({"token":"tok"})json", R"json({"error":14,"message":"not authorised"})json",
+                          R"json({"session":{"name":"chris","key":"newkey"}})json"};
+        writeFile(dir.filePath("c.json"), R"json({"api_key":"k","api_secret":"s"})json");
+        UrlCatcher catcher;
+        QDesktopServices::setUrlHandler("https", &catcher, "open");
+
+        Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        lastfm.setPollInterval(100);
+        lastfm.connectAccount();
+        QTRY_VERIFY(lastfm.waiting());
+        QCOMPARE(catcher.opened.size(), 1);
+        QVERIFY(catcher.opened.first().toString().contains("api_key=k"));
+        QVERIFY(catcher.opened.first().toString().contains("token=tok"));
+        QTRY_VERIFY(lastfm.connected());
+        QCOMPARE(lastfm.user(), QString("chris"));
+        QVERIFY(!lastfm.waiting());
+        QDesktopServices::unsetUrlHandler("https");
+
+        Lastfm reloaded(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        QVERIFY(reloaded.connected());
+    }
+
+    void lovingATrackAlsoLovesItOnLastfm()
+    {
+        QTemporaryDir dir;
+        FakeLastfm server;
+        server.replies = {"{}"};
+        writeFile(dir.filePath("c.json"), R"json({"api_key":"k","api_secret":"s","session_key":"sk","user":"me"})json");
+        Lastfm lastfm(dir.filePath("c.json"), dir.filePath("q.json"), server.url());
+        lastfm.love("A", "B", true);
+        lastfm.love("A", "B", false);
+        QTRY_COMPARE(server.requests.size(), 2);
+        QCOMPARE(decodeForm(server.requests.at(0)).value("method"), QString("track.love"));
+        QCOMPARE(decodeForm(server.requests.at(1)).value("method"), QString("track.unlove"));
     }
 
     void outputListStartsWithSystemDefault()

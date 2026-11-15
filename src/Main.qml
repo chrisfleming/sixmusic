@@ -20,6 +20,7 @@ ApplicationWindow {
     property bool helpVisible: false
     property bool showLoved: false
     readonly property color dim: "#9a9aa2"
+    readonly property var lastfm: backend.lastfm
 
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: win.helpVisible; onActivated: win.helpVisible = false }
@@ -137,6 +138,15 @@ ApplicationWindow {
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Output device")
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    flat: true
+                    text: win.lastfm.connected ? qsTr("Last.fm: %1").arg(win.lastfm.user) : qsTr("Connect to Last.fm")
+                    font.pixelSize: 12
+                    Material.foreground: win.lastfm.connected ? theme.accent : win.dim
+                    onClicked: lastfmDialog.open()
                 }
             }
 
@@ -316,6 +326,14 @@ ApplicationWindow {
 
                 Label {
                     Layout.fillWidth: true
+                    visible: win.lastfm.error !== ""
+                    text: win.lastfm.error
+                    color: "#ff6b6b"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    Layout.fillWidth: true
                     visible: backend.lovedError !== ""
                     text: backend.lovedError
                     color: "#ff6b6b"
@@ -329,6 +347,113 @@ ApplicationWindow {
                     color: "#ff6b6b"
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Dialog {
+            id: lastfmDialog
+            objectName: "lastfmDialog"
+            parent: Overlay.overlay
+            anchors.centerIn: parent
+            modal: true
+            width: Math.min(460, win.width - 48)
+            title: qsTr("Last.fm")
+            standardButtons: Dialog.Close
+            background: Rectangle {
+                radius: theme.radius
+                color: "#17171a"
+                border.color: "#2a2a30"
+            }
+
+            // Sized by its contents (no anchors), so the dialog grows to fit.
+            ColumnLayout {
+                width: lastfmDialog.availableWidth
+                spacing: 12
+
+                // Step 1: the user's own API account.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: !win.lastfm.configured
+                    spacing: 8
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Scrobbling needs your own free Last.fm API account. Create one, then paste its API key and shared secret here.")
+                    }
+                    Button {
+                        flat: true
+                        text: qsTr("Create an API account")
+                        onClicked: Qt.openUrlExternally("https://www.last.fm/api/account/create")
+                    }
+                    TextField { id: keyField; Layout.fillWidth: true; placeholderText: qsTr("API key") }
+                    TextField { id: secretField; Layout.fillWidth: true; placeholderText: qsTr("Shared secret"); echoMode: TextInput.Password }
+                    Button {
+                        text: qsTr("Save")
+                        enabled: keyField.text.trim() !== "" && secretField.text.trim() !== ""
+                        onClicked: { win.lastfm.saveCredentials(keyField.text, secretField.text); secretField.text = "" }
+                    }
+                }
+
+                // Step 2: approve access in the browser.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: win.lastfm.configured && !win.lastfm.connected
+                    spacing: 8
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: win.lastfm.waiting ? qsTr("Waiting for you to allow access in your browser…")
+                                                 : qsTr("Connect opens Last.fm in your browser, where you allow access. Your password is never typed here.")
+                    }
+                    RowLayout {
+                        Button {
+                            text: qsTr("Connect")
+                            enabled: !win.lastfm.waiting
+                            onClicked: win.lastfm.connectAccount()
+                        }
+                        Button {
+                            visible: win.lastfm.waiting
+                            flat: true
+                            text: qsTr("Cancel")
+                            onClicked: win.lastfm.cancelConnect()
+                        }
+                        Button {
+                            visible: !win.lastfm.waiting
+                            flat: true
+                            text: qsTr("Change API key")
+                            onClicked: win.lastfm.saveCredentials("", "")
+                        }
+                    }
+                }
+
+                // Connected.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: win.lastfm.connected
+                    spacing: 8
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Scrobbling to %1. Tracks you love here are loved on Last.fm too.").arg(win.lastfm.user)
+                    }
+                    Label {
+                        visible: win.lastfm.pending > 0
+                        color: win.dim
+                        text: qsTr("%n scrobbles waiting to be sent", "", win.lastfm.pending)
+                    }
+                    Button {
+                        text: qsTr("Disconnect")
+                        onClicked: win.lastfm.disconnectAccount()
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: win.lastfm.error !== ""
+                    wrapMode: Text.WordWrap
+                    color: "#ff6b6b"
+                    text: win.lastfm.error
                 }
             }
         }
